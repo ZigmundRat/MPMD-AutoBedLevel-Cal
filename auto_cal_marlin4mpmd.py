@@ -29,48 +29,63 @@ def establish_serial_connection(port, speed=115200, timeout=10, writeTimeout=100
         print ("Could not connect to {0} at baudrate {1}\nIO error: {2}".format(port, str(speed), e))
         return None
 
-def get_current_values(port):
-
-    # This function makes lots of assumptions about the output of the printer,
-    # but I am not sure if writing it in regex or improving it any other way would make any difference
-    # as this is unique for printer with this code and may not work for anything else
-
-    port.write(('G28\n').encode())
-    port.write(('G29 P2 V4\n').encode())
-
+def get_points(port):
     while True:
         out = port.readline().decode()
-        if 'G29 Auto Bed Leveling' in out:
+        if 'Bed ' in out:
             break
 
-    out = port.readline().decode()
-    z_axis_1 = out.split(' ')
-    out = port.readline().decode()
-    z_axis_2 = out.split(' ')
-    z_ave = float("{0:.3f}".format((float(z_axis_1[6]) + float(z_axis_2[6])) / 2))
-    print('Z-Axis :{0}, {1} Average:{2}'.format(z_axis_1[6].rstrip(),z_axis_2[6].rstrip(),str(z_ave)))
+    return out.split(' ')
 
-    out = port.readline().decode()
-    x_axis_1 = out.split(' ')
-    out = port.readline().decode()
-    x_axis_2 = out.split(' ')
-    x_ave = float("{0:.3f}".format((float(x_axis_1[6]) + float(x_axis_2[6])) / 2))
-    print('X-Axis :{0}, {1} Average:{2}'.format(x_axis_1[6].rstrip(),x_axis_2[6].rstrip(),str(x_ave)))
-
-    out = port.readline().decode()
-    y_axis_1 = out.split(' ')
-    out = port.readline().decode()
-    y_axis_2 = out.split(' ')
-    y_ave = float("{0:.3f}".format((float(y_axis_1[6]) + float(y_axis_2[6])) / 2))
-    print('Y-Axis :{0}, {1} Average:{2}'.format(y_axis_1[6].rstrip(),y_axis_2[6].rstrip(),str(y_ave)))
-
-    out = port.readline().decode()
-    center_1 = out.split(' ')
-    out = port.readline().decode()
-    center_2 = out.split(' ')
+def get_current_values(port):
+    port.write(('G28\n').encode())
+    # procedure from: https://github.com/mcheah/Marlin4MPMD/wiki/Calibration#user-content-m665m666-delta-parameter-calibrations
+    # G28 ; home
+    # G1 Z15 F6000; go to safe distance
+    # G30 ;probe center
+    # G1 X-43.3 Y-25 ; go to tower one
+    # G30 ;probe tower 1
+    # G1 X43.3 Y-25 ; go to tower two
+    # G30 ;probe tower 2
+    # G1 X0 Y50 ;go to tower 3
+    # G30 ;probe tower 3
+	
+    # Probe Center
+    port.write(('G1 Z15 F6000\n').encode())
+    port.write(('G30\n').encode())
+    center_1 = get_points(port)
+    port.write(('G30\n').encode())
+    center_2 = get_points(port)
     c_ave = float("{0:.3f}".format((float(center_1[6]) + float(center_2[6])) / 2))
     print('Center :{0}, {1} Average:{2}'.format(center_1[6].rstrip(),center_2[6].rstrip(),str(c_ave)))
-
+	
+    # Probe Tower 1
+    port.write(('G1 X-43.3 Y-25\n').encode())
+    port.write(('G30\n').encode())
+    x_axis_1 = get_points(port)
+    port.write(('G30\n').encode())
+    x_axis_2 = get_points(port)
+    x_ave = float("{0:.3f}".format((float(x_axis_1[6]) + float(x_axis_2[6])) / 2))
+    print('X-Axis :{0}, {1} Average:{2}'.format(x_axis_1[6].rstrip(),x_axis_2[6].rstrip(),str(x_ave)))
+	
+    # Probe Tower 2
+    port.write(('G1 X43.3 Y-25\n').encode())
+    port.write(('G30\n').encode())
+    y_axis_1 = get_points(port)
+    port.write(('G30\n').encode())
+    y_axis_2 = get_points(port)
+    y_ave = float("{0:.3f}".format((float(y_axis_1[6]) + float(y_axis_2[6])) / 2))
+    print('Y-Axis :{0}, {1} Average:{2}'.format(y_axis_1[6].rstrip(),y_axis_2[6].rstrip(),str(y_ave)))
+	
+    # Probe Tower 3
+    port.write(('G1 X0 Y50\n').encode())
+    port.write(('G30\n').encode())
+    z_axis_1 = get_points(port)
+    port.write(('G30\n').encode())
+    z_axis_2 = get_points(port)
+    z_ave = float("{0:.3f}".format((float(z_axis_1[6]) + float(z_axis_2[6])) / 2))
+    print('Z-Axis :{0}, {1} Average:{2}'.format(z_axis_1[6].rstrip(),z_axis_2[6].rstrip(),str(z_ave)))
+	
     return z_ave, x_ave, y_ave, c_ave
 
 def find_max_value(my_list):
@@ -171,9 +186,9 @@ def main():
     trial_z = 0.0
     trial_x = 0.0
     trial_y = 0.0
-    r_value = 63.2
+    r_value = 63.0
     step_mm = 57.14
-    l_value = 123.8
+    l_value = 120.8
 
 
     parser = argparse.ArgumentParser(description='Auto-Bed Cal. for Monoprice Mini Delta')
@@ -218,8 +233,16 @@ def main():
         port.write(('M92 X{0} Y{0} Z{0}\n'.format(str(step_mm))).encode())
         out = port.readline().decode()
 
-        print ('Setting up M665 L{0}\n'.format(str(l_value)))
+        print ('Setting up M665 L{0}\n').format(str(l_value))
         port.write(('M665 L{0}\n'.format(str(l_value))).encode())
+        out = port.readline().decode()
+
+        print ('Setting up M206 X0 Y0 Z0\n')
+        port.write('M206 X0 Y0 Z0\n'.encode())
+        out = port.readline().decode()
+
+        print ('Clearing mesh with M421 C\n')
+        port.write('M421 C\n'.encode())
         out = port.readline().decode()
 
         set_M_values(port, trial_z, trial_x, trial_y, r_value)
@@ -230,10 +253,12 @@ def main():
 
         port.close()
 
-        if calibrated and args.file:
-            data = {'z':new_z, 'x':new_x, 'y':new_y, 'r':new_r, 'l': l_value, 'step':step_mm, 'max_runs':max_runs, 'max_error':max_error}
-            with open(args.file, "w") as text_file:
-                text_file.write(json.dumps(data))
+        if calibrated:
+            print ('Now, run mesh bed leveling before printing: G29\n')
+            if args.file:
+                data = {'z':new_z, 'x':new_x, 'y':new_y, 'r':new_r, 'l': l_value, 'step':step_mm, 'max_runs':max_runs, 'max_error':max_error}
+                with open(args.file, "w") as text_file:
+                    text_file.write(json.dumps(data))
 
 
 if __name__ == '__main__':
